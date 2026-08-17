@@ -10,8 +10,6 @@
 
 ## Запуск
 
-Нужен только Docker. PHP и Composer на машину не ставятся.
-
 ```bash
 # поднять сервис на http://localhost:8080
 docker run --rm -p 8080:8080 -v "$PWD":/app -w /app php:8.4-cli \
