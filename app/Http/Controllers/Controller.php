@@ -15,4 +15,9 @@ abstract readonly class Controller
     {
         return Response::success($data, $status);
     }
+
+    protected function noContentResponse(): Response
+    {
+        return Response::noContent();
+    }
 }

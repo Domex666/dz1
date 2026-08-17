@@ -51,11 +51,14 @@ final readonly class Response
     {
         http_response_code($this->status);
 
+        // Заголовок ставится и для ответа без тела: иначе 204 уходил
+        // с дефолтным text/html и вводил клиента в заблуждение.
+        header('Content-Type: application/json; charset=utf-8');
+
         if ($this->body === null) {
             return;
         }
 
-        header('Content-Type: application/json; charset=utf-8');
         echo $this->encodedBody();
     }
 }

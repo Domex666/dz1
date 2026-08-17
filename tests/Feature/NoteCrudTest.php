@@ -43,7 +43,7 @@ final class NoteCrudTest extends FeatureTestCase
         $error = $this->error($response);
 
         self::assertSame('VALIDATION_ERROR', $error['code']);
-        self::assertArrayHasKey('tags.0', $error['fields']);
+        self::assertArrayHasKey('tags.0', $this->fields($response));
     }
 
     public function testRejectsUnknownField(): void
@@ -54,7 +54,7 @@ final class NoteCrudTest extends FeatureTestCase
         ]);
 
         self::assertSame(422, $response->status);
-        self::assertArrayHasKey('colour', $this->error($response)['fields']);
+        self::assertArrayHasKey('colour', $this->fields($response));
     }
 
     public function testRejectsClientSuppliedId(): void
@@ -65,7 +65,7 @@ final class NoteCrudTest extends FeatureTestCase
         ]);
 
         self::assertSame(422, $response->status);
-        self::assertArrayHasKey('id', $this->error($response)['fields']);
+        self::assertArrayHasKey('id', $this->fields($response));
     }
 
     public function testRejectsMissingTitle(): void
@@ -73,7 +73,7 @@ final class NoteCrudTest extends FeatureTestCase
         $response = $this->request('POST', '/api/v1/notes', ['content' => 'Без заголовка']);
 
         self::assertSame(422, $response->status);
-        self::assertArrayHasKey('title', $this->error($response)['fields']);
+        self::assertArrayHasKey('title', $this->fields($response));
     }
 
     public function testRejectsTooManyTagsAfterDeduplication(): void
@@ -84,7 +84,7 @@ final class NoteCrudTest extends FeatureTestCase
         ]);
 
         self::assertSame(422, $response->status);
-        self::assertArrayHasKey('tags', $this->error($response)['fields']);
+        self::assertArrayHasKey('tags', $this->fields($response));
     }
 
     public function testAcceptsElevenTagsThatDeduplicateToTen(): void
@@ -206,6 +206,155 @@ final class NoteCrudTest extends FeatureTestCase
 
         self::assertSame(200, $response->status);
         self::assertNotSame($past, $this->data($response)['updatedAt']);
+    }
+
+    /**
+     * PUT обязан сохранять createdAt. Проверка «в ту же секунду» это не доказывает:
+     * POST и PUT укладываются в одну секунду, и строка совпадёт, даже если
+     * репозиторий переписывает created_at. Метка сдвигается в прошлое.
+     */
+    public function testReplaceKeepsCreatedAt(): void
+    {
+        $created = $this->request('POST', '/api/v1/notes', ['title' => 'Заметка']);
+        $id = $this->data($created)['id'];
+
+        $past = '2019-05-05T05:05:05+00:00';
+        $this->rewriteStoredField($id, 'created_at', $past);
+
+        $response = $this->request('PUT', '/api/v1/notes/' . $id, ['title' => 'Другой заголовок']);
+
+        self::assertSame(200, $response->status);
+        self::assertSame($past, $this->data($response)['createdAt']);
+    }
+
+    public function testEmptyJsonObjectIsValidationErrorNotBadRequest(): void
+    {
+        // json_decode('{}', true) и json_decode('[]', true) дают одно и то же —
+        // пустой массив, — и тело {} классифицировалось как массив верхнего уровня.
+        $response = $this->send('POST', '/api/v1/notes', '{}');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('title', $this->fields($response));
+    }
+
+    public function testTopLevelJsonArrayIsBadRequest(): void
+    {
+        $response = $this->send('POST', '/api/v1/notes', '[]');
+
+        self::assertSame(400, $response->status);
+        self::assertSame('BAD_REQUEST', $this->error($response)['code']);
+    }
+
+    public function testTitleAtMaximumLengthIsAccepted(): void
+    {
+        $response = $this->request('POST', '/api/v1/notes', ['title' => str_repeat('я', 200)]);
+
+        self::assertSame(201, $response->status);
+    }
+
+    public function testTitleAboveMaximumLengthIsRejected(): void
+    {
+        $response = $this->request('POST', '/api/v1/notes', ['title' => str_repeat('я', 201)]);
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('title', $this->fields($response));
+    }
+
+    public function testContentAtMaximumLengthIsAccepted(): void
+    {
+        $response = $this->request('POST', '/api/v1/notes', [
+            'title' => 'Заметка',
+            'content' => str_repeat('я', 10000),
+        ]);
+
+        self::assertSame(201, $response->status);
+    }
+
+    public function testContentAboveMaximumLengthIsRejected(): void
+    {
+        $response = $this->request('POST', '/api/v1/notes', [
+            'title' => 'Заметка',
+            'content' => str_repeat('я', 10001),
+        ]);
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('content', $this->fields($response));
+    }
+
+    public function testTagAtMaximumLengthIsAccepted(): void
+    {
+        $response = $this->request('POST', '/api/v1/notes', [
+            'title' => 'Заметка',
+            'tags' => [str_repeat('я', 32)],
+        ]);
+
+        self::assertSame(201, $response->status);
+    }
+
+    public function testTagAboveMaximumLengthIsRejected(): void
+    {
+        $response = $this->request('POST', '/api/v1/notes', [
+            'title' => 'Заметка',
+            'tags' => [str_repeat('я', 33)],
+        ]);
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('tags.0', $this->fields($response));
+    }
+
+    public function testNonStringTagIsRejected(): void
+    {
+        $response = $this->send('POST', '/api/v1/notes', '{"title":"Заметка","tags":[123]}');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('tags.0', $this->fields($response));
+    }
+
+    public function testTagsMustBeAList(): void
+    {
+        $response = $this->send('POST', '/api/v1/notes', '{"title":"Заметка","tags":"работа"}');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('tags', $this->fields($response));
+    }
+
+    public function testTagsAsJsonObjectIsRejected(): void
+    {
+        // {"0":"a"} декодировался в [0 => 'a'] — валидный список — и проходил,
+        // а {"1":"a"} давал 422. Поведение зависело от нумерации ключей клиентом.
+        $response = $this->send('POST', '/api/v1/notes', '{"title":"Заметка","tags":{"0":"работа"}}');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('tags', $this->fields($response));
+    }
+
+    public function testNonStringContentIsRejected(): void
+    {
+        $response = $this->send('POST', '/api/v1/notes', '{"title":"Заметка","content":123}');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('content', $this->fields($response));
+    }
+
+    public function testNonBreakingSpaceTagIsRejected(): void
+    {
+        // Встроенный trim() не снимает U+00A0, и тег из одного неразрывного
+        // пробела сохранялся визуально пустым.
+        $response = $this->send('POST', '/api/v1/notes', '{"title":"Заметка","tags":[" "]}');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('tags.0', $this->fields($response));
+    }
+
+    public function testNumericFieldNameSurvivesInErrorBody(): void
+    {
+        // array_merge перенумеровывал целочисленные ключи, и поле «5»
+        // отчитывалось клиенту как «0».
+        $response = $this->send('POST', '/api/v1/notes', '{"5":"a","title":"Заметка"}');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('5', $this->fields($response));
+        self::assertStringContainsString('"5"', $response->encodedBody());
     }
 
     private function rewriteStoredField(string $id, string $field, string $value): void

@@ -72,6 +72,6 @@ final readonly class NoteController extends Controller
     {
         $this->noteService->delete($id);
 
-        return Response::noContent();
+        return $this->noContentResponse();
     }
 }

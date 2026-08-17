@@ -27,7 +27,10 @@ final readonly class ListNotesRequest
         }
 
         [$tags, $tagErrors] = $this->parseTags($request->queryString('tags'));
-        $errors = array_merge($errors, $tagErrors);
+
+        foreach ($tagErrors as $field => $messages) {
+            $errors[$field] = $messages;
+        }
 
         if ($errors !== []) {
             throw new ResponseValidationException($errors);
@@ -44,7 +47,11 @@ final readonly class ListNotesRequest
      */
     private function parseTags(string $raw): array
     {
-        if (trim($raw) === '') {
+        // Отсутствие фильтра — это ровно пустая строка (?tags= или параметра нет).
+        // Пробельный сегмент (?tags=%20) раньше тоже проглатывался как «фильтра нет»,
+        // хотя ?tags=%20,%20 давал 422 — и это то самое молчаливое решение
+        // за клиента, которое запрещено для тегов в теле запроса.
+        if ($raw === '') {
             return [[], []];
         }
 

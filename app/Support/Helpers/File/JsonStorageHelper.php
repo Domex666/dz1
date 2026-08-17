@@ -6,10 +6,15 @@ namespace App\Support\Helpers\File;
 
 use App\Enums\ErrorCodeEnum;
 use App\Exceptions\System\StorageException;
+use Throwable;
 
 /**
  * Аналог DatabaseHelper: инфраструктурный доступ к хранилищу.
  * Знает про файл и JSON, не знает ни одного слова из предметной области.
+ *
+ * Всё, что обращается к диску, обёрнуто в try/catch(Throwable) → StorageException —
+ * тот же приём, что и QueryException в эталоне. Без этого отказ прав на файл
+ * печатал PHP-предупреждение с абсолютным путём прямо в тело ответа.
  */
 final readonly class JsonStorageHelper
 {
@@ -26,17 +31,9 @@ final readonly class JsonStorageHelper
      */
     public function read(): array
     {
-        if (!is_file($this->path)) {
-            return [];
-        }
+        $raw = $this->readRawContents();
 
-        $raw = file_get_contents($this->path);
-
-        if ($raw === false) {
-            throw new StorageException(ErrorCodeEnum::STORAGE_FAILURE);
-        }
-
-        if (trim($raw) === '') {
+        if ($raw === null || trim($raw) === '') {
             return [];
         }
 
@@ -44,6 +41,16 @@ final readonly class JsonStorageHelper
 
         if (!is_array($decoded) || !array_is_list($decoded)) {
             throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
+        }
+
+        // Проверяется не только «это список», но и каждый его элемент.
+        // Файл [1,2,3] формально список, и раньше он проходил чтение,
+        // а падал уже глубже — TypeError'ом с кодом STORAGE_FAILURE.
+        // Хуже того, запись в такой файл проходила и дописывала мусор к мусору.
+        foreach ($decoded as $row) {
+            if (!is_array($row) || array_is_list($row)) {
+                throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
+            }
         }
 
         return $decoded;
@@ -59,12 +66,6 @@ final readonly class JsonStorageHelper
      */
     public function write(array $data): void
     {
-        $directory = dirname($this->path);
-
-        if (!is_dir($directory) && !mkdir($directory, 0o775, true) && !is_dir($directory)) {
-            throw new StorageException(ErrorCodeEnum::STORAGE_FAILURE);
-        }
-
         $encoded = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
 
         if ($encoded === false) {
@@ -73,19 +74,37 @@ final readonly class JsonStorageHelper
 
         $temporary = $this->path . '.' . getmypid() . '.tmp';
 
-        if (file_put_contents($temporary, $encoded . PHP_EOL) === false) {
-            throw new StorageException(ErrorCodeEnum::STORAGE_FAILURE);
-        }
+        try {
+            $directory = dirname($this->path);
 
-        if (!rename($temporary, $this->path)) {
-            @unlink($temporary);
+            if (!is_dir($directory)) {
+                mkdir($directory, 0o775, true);
+            }
 
-            throw new StorageException(ErrorCodeEnum::STORAGE_FAILURE);
+            file_put_contents($temporary, $encoded . PHP_EOL);
+            rename($temporary, $this->path);
+        } catch (Throwable $exception) {
+            if (is_file($temporary)) {
+                @unlink($temporary);
+            }
+
+            throw new StorageException(ErrorCodeEnum::STORAGE_FAILURE, $exception);
         }
     }
 
-    public function getPath(): string
+    /**
+     * @throws StorageException
+     */
+    private function readRawContents(): ?string
     {
-        return $this->path;
+        if (!is_file($this->path)) {
+            return null;
+        }
+
+        try {
+            return (string)file_get_contents($this->path);
+        } catch (Throwable $exception) {
+            throw new StorageException(ErrorCodeEnum::STORAGE_FAILURE, $exception);
+        }
     }
 }

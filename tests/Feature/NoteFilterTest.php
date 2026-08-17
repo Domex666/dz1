@@ -67,7 +67,7 @@ final class NoteFilterTest extends FeatureTestCase
         $response = $this->request('GET', '/api/v1/notes', query: ['mode' => 'wrong']);
 
         self::assertSame(422, $response->status);
-        self::assertArrayHasKey('mode', $this->error($response)['fields']);
+        self::assertArrayHasKey('mode', $this->fields($response));
     }
 
     public function testEmptyTagSegmentIsRejected(): void
@@ -75,17 +75,90 @@ final class NoteFilterTest extends FeatureTestCase
         $response = $this->request('GET', '/api/v1/notes', query: ['tags' => 'работа,,дом']);
 
         self::assertSame(422, $response->status);
-        self::assertArrayHasKey('tags.1', $this->error($response)['fields']);
+        self::assertArrayHasKey('tags.1', $this->fields($response));
     }
 
+    /**
+     * Прежняя версия этой проверки ничего не доказывала: три заметки создавались
+     * в одну секунду, массив createdAt состоял из трёх одинаковых строк,
+     * и rsort его не менял — сравнение проходило при любом порядке.
+     * Удаление usort целиком тест не роняло. Теперь метки задаются явно.
+     */
     public function testListIsSortedByCreatedAtDescending(): void
     {
+        $this->seedStorage([
+            $this->noteRow('11111111-1111-4111-8111-111111111111', 'Старая', [], '2026-01-01T00:00:00+00:00'),
+            $this->noteRow('22222222-2222-4222-8222-222222222222', 'Новая', [], '2026-03-03T00:00:00+00:00'),
+            $this->noteRow('33333333-3333-4333-8333-333333333333', 'Средняя', [], '2026-02-02T00:00:00+00:00'),
+        ]);
+
         $items = $this->data($this->request('GET', '/api/v1/notes'))['items'];
 
-        $createdAt = array_column($items, 'createdAt');
-        $sorted = $createdAt;
-        rsort($sorted);
+        self::assertSame(['Новая', 'Средняя', 'Старая'], array_column($items, 'title'));
+    }
 
-        self::assertSame($sorted, $createdAt);
+    /**
+     * Тай-брейк по id объявлен в SPEC явно — ради воспроизводимого порядка.
+     * До этого теста он не проверялся ни одним ассертом.
+     */
+    public function testEqualCreatedAtIsBrokenByIdAscending(): void
+    {
+        $sameMoment = '2026-01-01T00:00:00+00:00';
+
+        $this->seedStorage([
+            $this->noteRow('cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'Третья', [], $sameMoment),
+            $this->noteRow('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Первая', [], $sameMoment),
+            $this->noteRow('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Вторая', [], $sameMoment),
+        ]);
+
+        $items = $this->data($this->request('GET', '/api/v1/notes'))['items'];
+
+        self::assertSame(['Первая', 'Вторая', 'Третья'], array_column($items, 'title'));
+    }
+
+    public function testWhitespaceOnlyTagSegmentIsRejected(): void
+    {
+        // Один пробельный сегмент раньше проглатывался как «фильтра нет»,
+        // хотя два таких же давали 422.
+        $response = $this->request('GET', '/api/v1/notes', query: ['tags' => ' ']);
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('tags.0', $this->fields($response));
+    }
+
+    public function testEmptyTagsParameterMeansNoFilter(): void
+    {
+        $response = $this->request('GET', '/api/v1/notes', query: ['tags' => '']);
+
+        self::assertSame(200, $response->status);
+        self::assertCount(3, $this->data($response)['items']);
+    }
+
+    public function testArrayModeParameterIsRejected(): void
+    {
+        // ?mode[]=wrong молча подменялся значением по умолчанию,
+        // и клиент получал не тот набор данных без признака ошибки.
+        $response = $this->request('GET', '/api/v1/notes', query: ['mode' => ['any']]);
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('mode', $this->fields($response));
+    }
+
+    public function testArrayTagsParameterIsRejected(): void
+    {
+        $response = $this->request('GET', '/api/v1/notes', query: ['tags' => ['дом']]);
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('tags', $this->fields($response));
+    }
+
+    public function testAnyModeWithoutTagsReturnsEverything(): void
+    {
+        // Непокрытая комбинация: убрать ранний выход при пустом фильтре —
+        // и mode=any начинал возвращать ноль заметок вместо всех.
+        $response = $this->request('GET', '/api/v1/notes', query: ['mode' => 'any']);
+
+        self::assertSame(200, $response->status);
+        self::assertCount(3, $this->data($response)['items']);
     }
 }

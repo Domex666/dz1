@@ -6,6 +6,7 @@ namespace App\Validation\Validators;
 
 use App\Exceptions\System\ResponseValidationException;
 use App\Helpers\TagHelper;
+use App\Support\Helpers\Text\TextHelper;
 use App\Validation\Rules\TagsValidationRule;
 
 final readonly class NoteValidator
@@ -26,12 +27,12 @@ final readonly class NoteValidator
     public function validate(array $payload): array
     {
         $errors = $this->validateUnknownFields($payload);
-        $errors = array_merge($errors, $this->validateTitle($payload['title'] ?? null));
-        $errors = array_merge($errors, $this->validateContent($payload['content'] ?? ''));
+        $errors = $this->mergeErrors($errors, $this->validateTitle($payload['title'] ?? null));
+        $errors = $this->mergeErrors($errors, $this->validateContent($payload['content'] ?? ''));
 
         $rawTags = $payload['tags'] ?? [];
         $tagErrors = $this->tagsValidationRule->validate($rawTags);
-        $errors = array_merge($errors, $tagErrors);
+        $errors = $this->mergeErrors($errors, $tagErrors);
 
         $tags = [];
 
@@ -51,15 +52,33 @@ final readonly class NoteValidator
         }
 
         return [
-            'title' => trim((string)($payload['title'] ?? '')),
+            'title' => TextHelper::trim((string)($payload['title'] ?? '')),
             'content' => (string)($payload['content'] ?? ''),
             'tags' => $tags,
         ];
     }
 
     /**
+     * array_merge здесь использовать нельзя: имя поля из одних цифр становится
+     * целочисленным ключом, а array_merge такие ключи перенумеровывает —
+     * поле «5» отчитывалось клиенту как «0».
+     *
+     * @param array<array-key, string[]> $target
+     * @param array<array-key, string[]> $source
+     * @return array<array-key, string[]>
+     */
+    private function mergeErrors(array $target, array $source): array
+    {
+        foreach ($source as $field => $messages) {
+            $target[$field] = array_merge($target[$field] ?? [], $messages);
+        }
+
+        return $target;
+    }
+
+    /**
      * @param array<string, mixed> $payload
-     * @return array<string, string[]>
+     * @return array<array-key, string[]>
      */
     private function validateUnknownFields(array $payload): array
     {
@@ -67,7 +86,7 @@ final readonly class NoteValidator
 
         foreach (array_keys($payload) as $field) {
             if (!in_array((string)$field, self::ALLOWED_FIELDS, true)) {
-                $errors[(string)$field][] = 'Неизвестное поле';
+                $errors[$field][] = 'Неизвестное поле';
             }
         }
 
@@ -79,11 +98,11 @@ final readonly class NoteValidator
      */
     private function validateTitle(mixed $title): array
     {
-        if (!is_string($title) || trim($title) === '') {
+        if (!is_string($title) || TextHelper::trim($title) === '') {
             return ['title' => ['Поле title обязательно и должно быть непустой строкой']];
         }
 
-        if (mb_strlen(trim($title)) > self::TITLE_MAX_LENGTH) {
+        if (mb_strlen(TextHelper::trim($title)) > self::TITLE_MAX_LENGTH) {
             return ['title' => ['Поле title длиннее ' . self::TITLE_MAX_LENGTH . ' символов']];
         }
 

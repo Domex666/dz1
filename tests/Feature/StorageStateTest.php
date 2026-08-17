@@ -63,6 +63,67 @@ final class StorageStateTest extends FeatureTestCase
         self::assertSame($corrupted, file_get_contents($this->storagePath));
     }
 
+    /**
+     * Файл [1,2,3] формально список, поэтому проверку «это список» он проходил.
+     * Чтение падало глубже TypeError'ом и отдавало STORAGE_FAILURE вместо
+     * STORAGE_CORRUPTED, а запись проходила и дописывала мусор к мусору.
+     */
+    public function testListOfScalarsIsCorruptedOnRead(): void
+    {
+        $this->writeStorage('[1,2,3]');
+
+        $response = $this->request('GET', '/api/v1/notes');
+
+        self::assertSame(500, $response->status);
+        self::assertSame('STORAGE_CORRUPTED', $this->error($response)['code']);
+    }
+
+    public function testListOfScalarsBlocksWrites(): void
+    {
+        $corrupted = '[1,2,3]';
+        $this->writeStorage($corrupted);
+
+        $response = $this->request('POST', '/api/v1/notes', ['title' => 'Новая']);
+
+        self::assertSame(500, $response->status);
+        self::assertSame('STORAGE_CORRUPTED', $this->error($response)['code']);
+        self::assertSame($corrupted, file_get_contents($this->storagePath));
+    }
+
+    public function testRowWithoutRequiredColumnsIsCorrupted(): void
+    {
+        // Раньше строка {} превращалась в заметку со всеми пустыми полями.
+        $this->writeStorage('[{}]');
+
+        $response = $this->request('GET', '/api/v1/notes');
+
+        self::assertSame(500, $response->status);
+        self::assertSame('STORAGE_CORRUPTED', $this->error($response)['code']);
+    }
+
+    public function testRowWithWrongTagsTypeIsCorrupted(): void
+    {
+        // "tags":"xxx" протаскивал ненормализованный тег и в список, и в аналитику,
+        // ломая заявленный инвариант «теги всегда в верхнем регистре».
+        $this->seedStorage([
+            ['id' => 'x', 'title' => 't', 'content' => '', 'tags' => 'работа', 'created_at' => 'a', 'updated_at' => 'a'],
+        ]);
+
+        $response = $this->request('GET', '/api/v1/notes');
+
+        self::assertSame(500, $response->status);
+        self::assertSame('STORAGE_CORRUPTED', $this->error($response)['code']);
+    }
+
+    public function testSuccessfulWriteLeavesNoTemporaryFiles(): void
+    {
+        $this->createNote('Заметка');
+
+        $leftovers = glob($this->storageDirectory . DIRECTORY_SEPARATOR . '*.tmp');
+
+        self::assertSame([], $leftovers);
+    }
+
     public function testCorruptedFileErrorHasNoStackTrace(): void
     {
         file_put_contents($this->storagePath, 'мусор');

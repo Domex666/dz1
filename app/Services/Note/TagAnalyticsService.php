@@ -7,6 +7,7 @@ namespace App\Services\Note;
 use App\DTO\Response\TagCountDto;
 use App\Interfaces\Repositories\NoteRepositoryInterface;
 use App\Interfaces\Services\TagAnalyticsServiceInterface;
+use Throwable;
 
 final readonly class TagAnalyticsService implements TagAnalyticsServiceInterface
 {
@@ -16,13 +17,17 @@ final readonly class TagAnalyticsService implements TagAnalyticsServiceInterface
 
     /**
      * @return list<TagCountDto>
+     * @throws Throwable
      */
     public function getTopTags(int $limit): array
     {
         $counts = [];
 
         foreach ($this->noteRepository->getAllNotes() as $note) {
-            foreach ($note->tags as $tag) {
+            // array_unique обязателен: контракт обещает число ЗАМЕТОК с тегом,
+            // а не число упоминаний. Дедуп на записи — инвариант, а не гарантия
+            // чтения: файл, отредактированный руками, его не соблюдает.
+            foreach (array_unique($note->tags) as $tag) {
                 $counts[$tag] = ($counts[$tag] ?? 0) + 1;
             }
         }

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Support;
 
+use App\Exceptions\System\InternalErrorException;
 use Closure;
-use RuntimeException;
 
 /**
  * Минимальная замена биндингам AppServiceProvider: контракт → фабрика реализации.
@@ -24,6 +24,9 @@ final class Container
         $this->bindings[$abstract] = $factory;
     }
 
+    /**
+     * @throws InternalErrorException
+     */
     public function get(string $abstract): object
     {
         if (isset($this->resolved[$abstract])) {
@@ -31,7 +34,9 @@ final class Container
         }
 
         if (!isset($this->bindings[$abstract])) {
-            throw new RuntimeException("Контракт $abstract не зарегистрирован в контейнере");
+            // Не RuntimeException: бросать разрешено только App\Exceptions\*,
+            // иначе ответ уходит мимо описанного формата ошибки.
+            throw new InternalErrorException("Контракт $abstract не зарегистрирован в контейнере");
         }
 
         return $this->resolved[$abstract] = ($this->bindings[$abstract])($this);

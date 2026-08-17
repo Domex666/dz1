@@ -6,14 +6,18 @@ namespace App\Interfaces\Services;
 
 use App\DTO\Create\CreateNoteDto;
 use App\DTO\Helper\NoteFilterDto;
-use App\DTO\RepositoryMapModel\NoteMapDto;
+use App\DTO\Response\NoteResponseDto;
 use App\DTO\Update\UpdateNoteDto;
 use Throwable;
 
+/**
+ * Наружу отдаётся NoteResponseDto из DTO\Response, а не NoteMapDto из слоя хранилища:
+ * контракт сервиса не должен зависеть от того, как запись лежит в файле.
+ */
 interface NoteServiceInterface
 {
     /**
-     * @return list<NoteMapDto>
+     * @return list<NoteResponseDto>
      * @throws Throwable
      */
     public function getNotes(NoteFilterDto $filter): array;
@@ -21,12 +25,12 @@ interface NoteServiceInterface
     /**
      * @throws Throwable
      */
-    public function getNote(string $id): NoteMapDto;
+    public function getNote(string $id): NoteResponseDto;
 
     /**
      * @throws Throwable
      */
-    public function create(CreateNoteDto $note): NoteMapDto;
+    public function create(CreateNoteDto $note): NoteResponseDto;
 
     /**
      * Полная замена. Повторная отправка того же тела идемпотентна:
@@ -34,7 +38,7 @@ interface NoteServiceInterface
      *
      * @throws Throwable
      */
-    public function replace(string $id, UpdateNoteDto $note): NoteMapDto;
+    public function replace(string $id, UpdateNoteDto $note): NoteResponseDto;
 
     /**
      * @throws Throwable

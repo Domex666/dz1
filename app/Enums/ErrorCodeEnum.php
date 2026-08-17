@@ -18,6 +18,7 @@ enum ErrorCodeEnum: string
     case VALIDATION_ERROR = 'VALIDATION_ERROR';
     case STORAGE_CORRUPTED = 'STORAGE_CORRUPTED';
     case STORAGE_FAILURE = 'STORAGE_FAILURE';
+    case INTERNAL_ERROR = 'INTERNAL_ERROR';
 
     public function getStatusCode(): ExceptionStatusCodeEnum
     {
@@ -26,7 +27,9 @@ enum ErrorCodeEnum: string
             self::ROUTE_NOT_FOUND, self::NOTE_NOT_FOUND => ExceptionStatusCodeEnum::NOT_FOUND,
             self::METHOD_NOT_ALLOWED => ExceptionStatusCodeEnum::METHOD_NOT_ALLOWED,
             self::VALIDATION_ERROR => ExceptionStatusCodeEnum::UNPROCESSABLE_ENTITY,
-            self::STORAGE_CORRUPTED, self::STORAGE_FAILURE => ExceptionStatusCodeEnum::INTERNAL_ERROR,
+            self::STORAGE_CORRUPTED,
+            self::STORAGE_FAILURE,
+            self::INTERNAL_ERROR => ExceptionStatusCodeEnum::INTERNAL_ERROR,
         };
     }
 
@@ -40,6 +43,7 @@ enum ErrorCodeEnum: string
             self::VALIDATION_ERROR => 'Переданные данные не прошли проверку',
             self::STORAGE_CORRUPTED => 'Файл хранилища повреждён',
             self::STORAGE_FAILURE => 'Не удалось обратиться к хранилищу',
+            self::INTERNAL_ERROR => 'Внутренняя ошибка сервиса',
         };
     }
 }

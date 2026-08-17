@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Helpers;
 
+use App\Support\Helpers\Text\TextHelper;
+
 /**
  * Доменный хелпер: правила нормализации тегов из SPEC.md.
  * Лежит в App\Helpers, а не в App\Support, потому что «тег» — слово из предметной области.
@@ -16,10 +18,13 @@ final class TagHelper
     /**
      * trim + верхний регистр. mb_strtoupper, а не strtoupper: strtoupper
      * не трогает кириллицу, и «работа» осталась бы в нижнем регистре.
+     *
+     * trim берётся из TextHelper, а не встроенный: встроенный не снимает
+     * неразрывный пробел, и тег из одного U+00A0 проходил как непустой.
      */
     public static function normalize(string $tag): string
     {
-        return mb_strtoupper(trim($tag), 'UTF-8');
+        return mb_strtoupper(TextHelper::trim($tag), 'UTF-8');
     }
 
     /**

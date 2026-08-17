@@ -239,8 +239,9 @@ docker run --rm -v "$PWD":/app -w /app php:8.4-cli \
   php tools/phpunit.phar --colors=never
 
 # проверка синтаксиса всех файлов
+# bootstrap/ входит обязательно: там точка сборки и рендер ошибок
 docker run --rm -v "$PWD":/app -w /app php:8.4-cli \
-  sh -c 'find app public tests -name "*.php" -exec php -l {} \;'
+  sh -c 'find app bootstrap public tests -name "*.php" -exec php -l {} \;'
 ```
 
 Эти команды агент выполняет сам, когда нужно показать результат. Пересказ вывода

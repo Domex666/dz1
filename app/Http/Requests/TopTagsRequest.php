@@ -25,8 +25,9 @@ final readonly class TopTagsRequest
         $raw = $request->queryString('limit');
 
         // Проверка регуляркой, а не (int): (int)"abc" даёт 0 и молча превращает
-        // мусор в валидное на вид значение.
-        if (preg_match('/^\d+$/', $raw) !== 1) {
+        // мусор в валидное на вид значение. Ведущие нули отвергаются:
+        // «007» — не то же самое, что «7», и принимать его значит угадывать.
+        if (preg_match('/^(0|[1-9]\d*)$/', $raw) !== 1) {
             throw new ResponseValidationException(['limit' => ['Ожидается целое число']]);
         }
 

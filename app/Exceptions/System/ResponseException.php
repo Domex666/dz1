@@ -57,7 +57,10 @@ abstract class ResponseException extends Exception implements ResponseExceptionI
         ];
 
         if ($fields !== []) {
-            $this->error['fields'] = $fields;
+            // Приведение к объекту обязательно: имя поля, состоящее из цифр
+            // («5»), становится в PHP целочисленным ключом, и json_encode
+            // отдал бы fields массивом, потеряв имена полей.
+            $this->error['fields'] = (object)$fields;
         }
     }
 }

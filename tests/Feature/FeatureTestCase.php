@@ -115,4 +115,58 @@ abstract class FeatureTestCase extends TestCase
 
         return $body['error'];
     }
+
+    /**
+     * fields приходит объектом, а не массивом: имя поля из одних цифр стало бы
+     * целочисленным ключом, и json_encode отдал бы массив, потеряв имена.
+     *
+     * @return array<array-key, string[]>
+     */
+    protected function fields(Response $response): array
+    {
+        return (array)($this->error($response)['fields'] ?? []);
+    }
+
+    /**
+     * Полностью перезаписывает файл хранилища. Нужен для состояний, которых
+     * через API не достичь: испорченные строки, метки времени в прошлом.
+     */
+    protected function writeStorage(string $contents): void
+    {
+        file_put_contents($this->storagePath, $contents);
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     */
+    protected function seedStorage(array $rows): void
+    {
+        $this->writeStorage((string)json_encode($rows, JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * Строка хранилища с заданной меткой времени.
+     *
+     * Метка ATOM имеет секундную точность, поэтому заметки, созданные через API
+     * подряд, получают одинаковый createdAt — и любая проверка сортировки
+     * проходит вхолостую. Здесь метки задаются явно и различаются.
+     *
+     * @param list<string> $tags
+     * @return array<string, mixed>
+     */
+    protected function noteRow(
+        string $id,
+        string $title,
+        array $tags = [],
+        string $createdAt = '2026-01-01T00:00:00+00:00',
+    ): array {
+        return [
+            'id' => $id,
+            'title' => $title,
+            'content' => '',
+            'tags' => $tags,
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ];
+    }
 }

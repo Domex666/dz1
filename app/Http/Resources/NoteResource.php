@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace App\Http\Resources;
 
-use App\DTO\RepositoryMapModel\NoteMapDto;
+use App\DTO\Response\NoteResponseDto;
 
 final readonly class NoteResource
 {
     /**
      * @return array<string, mixed>
      */
-    public static function make(NoteMapDto $note): array
+    public static function make(NoteResponseDto $note): array
     {
         return [
             'id' => $note->id,
@@ -24,11 +24,11 @@ final readonly class NoteResource
     }
 
     /**
-     * @param list<NoteMapDto> $notes
+     * @param list<NoteResponseDto> $notes
      * @return list<array<string, mixed>>
      */
     public static function collection(array $notes): array
     {
-        return array_map(static fn (NoteMapDto $note): array => self::make($note), $notes);
+        return array_map(static fn (NoteResponseDto $note): array => self::make($note), $notes);
     }
 }

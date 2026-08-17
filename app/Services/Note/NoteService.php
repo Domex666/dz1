@@ -7,10 +7,12 @@ namespace App\Services\Note;
 use App\DTO\Create\CreateNoteDto;
 use App\DTO\Helper\NoteFilterDto;
 use App\DTO\RepositoryMapModel\NoteMapDto;
+use App\DTO\Response\NoteResponseDto;
 use App\DTO\Update\UpdateNoteDto;
 use App\Interfaces\Repositories\NoteRepositoryInterface;
 use App\Interfaces\Services\NoteServiceInterface;
 use App\Support\Helpers\Lock\LockHelper;
+use Throwable;
 
 /**
  * Оркестратор: расставляет порядок, работу делает репозиторий.
@@ -29,29 +31,35 @@ final readonly class NoteService implements NoteServiceInterface
     }
 
     /**
-     * @return list<NoteMapDto>
+     * @return list<NoteResponseDto>
+     * @throws Throwable
      */
     public function getNotes(NoteFilterDto $filter): array
     {
-        return $this->noteRepository->getNotes($filter);
-    }
-
-    public function getNote(string $id): NoteMapDto
-    {
-        return $this->noteRepository->getNoteById($id);
-    }
-
-    public function create(CreateNoteDto $note): NoteMapDto
-    {
-        return LockHelper::lock(
-            self::LOCK_KEY,
-            fn (): NoteMapDto => $this->noteRepository->createNote($note)
+        return array_map(
+            fn (NoteMapDto $note): NoteResponseDto => $this->toResponseDto($note),
+            $this->noteRepository->getNotes($filter)
         );
     }
 
-    public function replace(string $id, UpdateNoteDto $note): NoteMapDto
+    public function getNote(string $id): NoteResponseDto
     {
-        return LockHelper::lock(self::LOCK_KEY, function () use ($id, $note): NoteMapDto {
+        return $this->toResponseDto($this->noteRepository->getNoteById($id));
+    }
+
+    public function create(CreateNoteDto $note): NoteResponseDto
+    {
+        $created = LockHelper::lock(
+            self::LOCK_KEY,
+            fn (): NoteMapDto => $this->noteRepository->createNote($note)
+        );
+
+        return $this->toResponseDto($created);
+    }
+
+    public function replace(string $id, UpdateNoteDto $note): NoteResponseDto
+    {
+        $replaced = LockHelper::lock(self::LOCK_KEY, function () use ($id, $note): NoteMapDto {
             $current = $this->noteRepository->getNoteById($id);
 
             // Идемпотентность: ретрай по таймауту не должен двигать updatedAt.
@@ -63,14 +71,13 @@ final readonly class NoteService implements NoteServiceInterface
 
             return $this->noteRepository->replaceNote($id, $note);
         });
+
+        return $this->toResponseDto($replaced);
     }
 
     public function delete(string $id): void
     {
         LockHelper::lock(self::LOCK_KEY, function () use ($id): void {
-            // Явная проверка до удаления: повторный DELETE обязан вернуть 404,
-            // а не молча отчитаться об успехе.
-            $this->noteRepository->getNoteById($id);
             $this->noteRepository->deleteNote($id);
         });
     }
@@ -80,5 +87,20 @@ final readonly class NoteService implements NoteServiceInterface
         return $current->title === $note->title
             && $current->content === $note->content
             && $current->tags === $note->tags;
+    }
+
+    /**
+     * Единственное место, где форма хранилища превращается в форму ответа.
+     */
+    private function toResponseDto(NoteMapDto $note): NoteResponseDto
+    {
+        return new NoteResponseDto(
+            id: $note->id,
+            title: $note->title,
+            content: $note->content,
+            tags: $note->tags,
+            createdAt: $note->createdAt,
+            updatedAt: $note->updatedAt,
+        );
     }
 }
