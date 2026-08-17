@@ -97,13 +97,34 @@ final readonly class JsonStorageHelper
      */
     private function readRawContents(): ?string
     {
-        if (!is_file($this->path)) {
+        // clearstatcache обязателен. is_file() читает stat-кэш процесса, и после
+        // удаления файла внешним процессом он ещё какое-то время отвечает true.
+        // Дальше file_get_contents варнингует, обработчик из bootstrap/errors.php
+        // превращает варнинг в исключение, и «файла нет» превращается
+        // в 500 STORAGE_FAILURE вместо обещанных 200 и пустого списка.
+        clearstatcache(true, $this->path);
+
+        if (!file_exists($this->path)) {
             return null;
+        }
+
+        if (!is_file($this->path)) {
+            // Путь есть, но это не файл — например каталог. Отдавать пустой список
+            // значило бы выдать сломанное хранилище за пустое.
+            throw new StorageException(ErrorCodeEnum::STORAGE_FAILURE);
         }
 
         try {
             return (string)file_get_contents($this->path);
         } catch (Throwable $exception) {
+            clearstatcache(true, $this->path);
+
+            // Файл мог исчезнуть между проверкой и чтением. Это гонка,
+            // а не отказ хранилища: снаружи это по-прежнему «файла нет».
+            if (!file_exists($this->path)) {
+                return null;
+            }
+
             throw new StorageException(ErrorCodeEnum::STORAGE_FAILURE, $exception);
         }
     }

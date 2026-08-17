@@ -50,8 +50,7 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
      */
     public function getAllNotes(): array
     {
-        $rows = $this->storage->read();
-        $notes = array_map(fn (array $row): NoteMapDto => $this->toDto($row), $rows);
+        $notes = array_map(fn (array $row): NoteMapDto => $this->toDto($row), $this->readRows());
 
         // Тай-брейк задан явно: без него порядок зависит от порядка строк в файле
         // и любой тест на список становится плавающим.
@@ -66,13 +65,35 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
 
     public function findNoteById(string $id): ?NoteMapDto
     {
-        foreach ($this->storage->read() as $row) {
+        foreach ($this->readRows() as $row) {
             if (($row['id'] ?? null) === $id) {
                 return $this->toDto($row);
             }
         }
 
         return null;
+    }
+
+    /**
+     * Читает строки и проверяет КАЖДУЮ до того, как вызывающий код что-либо запишет.
+     *
+     * Без этого файл, испорченный на уровне отдельной записи, вёл себя так:
+     * GET честно отдавал 500 STORAGE_CORRUPTED, а POST и DELETE проходили
+     * и затирали данные. То есть ровно «потеря данных под видом устойчивости»,
+     * которую SPEC.md называет отвергнутой альтернативой.
+     *
+     * @return list<array<string, mixed>>
+     * @throws StorageException
+     */
+    private function readRows(): array
+    {
+        $rows = $this->storage->read();
+
+        foreach ($rows as $row) {
+            $this->toDto($row);
+        }
+
+        return $rows;
     }
 
     /**
@@ -94,7 +115,7 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
      */
     public function createNote(CreateNoteDto $note): NoteMapDto
     {
-        $rows = $this->storage->read();
+        $rows = $this->readRows();
         $now = $this->now();
 
         $row = [
@@ -118,7 +139,7 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
      */
     public function replaceNote(string $id, UpdateNoteDto $note): NoteMapDto
     {
-        $rows = $this->storage->read();
+        $rows = $this->readRows();
         $index = $this->indexOf($rows, $id);
 
         $rows[$index]['title'] = $note->title;
@@ -137,7 +158,7 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
      */
     public function deleteNote(string $id): void
     {
-        $rows = $this->storage->read();
+        $rows = $this->readRows();
         $index = $this->indexOf($rows, $id);
 
         unset($rows[$index]);
@@ -188,6 +209,12 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
             throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
         }
 
+        // Проверяется не только тип, но и формат: строка «не дата» раньше
+        // доезжала до клиента как значение createdAt и ломала сортировку,
+        // которая сравнивает эти строки.
+        $this->assertTimestamp($row['created_at']);
+        $this->assertTimestamp($row['updated_at']);
+
         if (!is_array($row['tags']) || !array_is_list($row['tags'])) {
             throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
         }
@@ -206,6 +233,16 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
             createdAt: $row['created_at'],
             updatedAt: $row['updated_at'],
         );
+    }
+
+    /**
+     * @throws StorageException
+     */
+    private function assertTimestamp(string $value): void
+    {
+        if (DateTimeImmutable::createFromFormat(DateTimeInterface::ATOM, $value) === false) {
+            throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
+        }
     }
 
     private function now(): string

@@ -6,13 +6,32 @@ namespace Tests\Feature;
 
 final class NoteFilterTest extends FeatureTestCase
 {
+    /**
+     * Метки времени задаются явно, а не через createNote.
+     *
+     * Три заметки, созданные подряд, попадают в одну секунду, порядок
+     * определяется случайными UUID, и проверки, читающие items[0],
+     * становятся монеткой: мутация «потерять array_values в getNotes»
+     * ловилась лишь в 7 прогонах из 10.
+     */
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->createNote('Первая', ['работа', 'срочное']);
-        $this->createNote('Вторая', ['работа']);
-        $this->createNote('Третья', ['дом']);
+        $this->seedStorage([
+            $this->noteRow('11111111-1111-4111-8111-111111111111', 'Первая', ['РАБОТА', 'СРОЧНОЕ'], '2026-01-03T00:00:00+00:00'),
+            $this->noteRow('22222222-2222-4222-8222-222222222222', 'Вторая', ['РАБОТА'], '2026-01-02T00:00:00+00:00'),
+            $this->noteRow('33333333-3333-4333-8333-333333333333', 'Третья', ['ДОМ'], '2026-01-01T00:00:00+00:00'),
+        ]);
+    }
+
+    public function testFilteredListIsReindexed(): void
+    {
+        // items обязан быть JSON-массивом, а не объектом с дырами в ключах:
+        // фильтр выбрасывает элементы из середины.
+        $response = $this->request('GET', '/api/v1/notes', query: ['tags' => 'дом']);
+
+        self::assertStringContainsString('"items":[', $response->encodedBody());
     }
 
     public function testReturnsAllNotesWithoutFilter(): void

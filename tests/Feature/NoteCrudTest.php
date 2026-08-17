@@ -357,6 +357,65 @@ final class NoteCrudTest extends FeatureTestCase
         self::assertStringContainsString('"5"', $response->encodedBody());
     }
 
+    /**
+     * Все существующие проверки записи меняли заголовок, поэтому сравнение
+     * в isUnchanged можно было сузить до одного title — и правка, меняющая
+     * только текст и теги, молча терялась бы под ответом 200.
+     */
+    public function testReplaceWithSameTitleButOtherFieldsIsPersisted(): void
+    {
+        $created = $this->createNote('Один и тот же заголовок', ['дом'], 'старый текст');
+
+        $response = $this->request('PUT', '/api/v1/notes/' . $created['id'], [
+            'title' => 'Один и тот же заголовок',
+            'content' => 'НОВЫЙ ТЕКСТ',
+            'tags' => ['работа', 'срочное'],
+        ]);
+
+        self::assertSame(200, $response->status);
+        self::assertSame('НОВЫЙ ТЕКСТ', $this->data($response)['content']);
+        self::assertSame(['РАБОТА', 'СРОЧНОЕ'], $this->data($response)['tags']);
+
+        $stored = $this->data($this->request('GET', '/api/v1/notes/' . $created['id']));
+
+        self::assertSame('НОВЫЙ ТЕКСТ', $stored['content'], 'изменение обязано доехать до хранилища');
+        self::assertSame(['РАБОТА', 'СРОЧНОЕ'], $stored['tags']);
+    }
+
+    public function testWhitespaceOnlyTitleIsRejected(): void
+    {
+        // Покрыт был только отсутствующий title, поэтому проверку на пустоту
+        // после trim можно было выкинуть незаметно.
+        $response = $this->request('POST', '/api/v1/notes', ['title' => '   ']);
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('title', $this->fields($response));
+    }
+
+    public function testGeneratedIdIsUuidV4(): void
+    {
+        // SPEC обещает UUID v4, но формат не был закреплён ни одним ассертом.
+        $note = $this->createNote('Заметка');
+
+        self::assertMatchesRegularExpression(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
+            $note['id']
+        );
+    }
+
+    public function testTimestampsAreIso8601Utc(): void
+    {
+        $note = $this->createNote('Заметка');
+
+        foreach (['createdAt', 'updatedAt'] as $field) {
+            self::assertMatchesRegularExpression(
+                '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$/',
+                $note[$field],
+                "поле $field должно быть ISO-8601 в UTC"
+            );
+        }
+    }
+
     private function rewriteStoredField(string $id, string $field, string $value): void
     {
         /** @var list<array<string, mixed>> $rows */
