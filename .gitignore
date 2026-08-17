@@ -2,3 +2,4 @@
 .DS_Store
 storage/notes.json
 .phpunit.result.cache
+.phpunit.cache/
