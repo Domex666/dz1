@@ -201,6 +201,13 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
             }
         }
 
+        // Лишние ключи — тоже порча. Иначе сервис хранил и переписывал бы данные,
+        // которые никогда не валидировал и не показывает, а API при этом
+        // отвергает лишнее поле в теле запроса кодом 422. Строгость должна быть одна.
+        if (count($row) !== count(self::REQUIRED_COLUMNS)) {
+            throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
+        }
+
         if (!is_string($row['id']) || !is_string($row['title']) || !is_string($row['content'])) {
             throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
         }
@@ -240,7 +247,20 @@ final readonly class NoteJsonRepository implements NoteRepositoryInterface
      */
     private function assertTimestamp(string $value): void
     {
-        if (DateTimeImmutable::createFromFormat(DateTimeInterface::ATOM, $value) === false) {
+        $parsed = DateTimeImmutable::createFromFormat(DateTimeInterface::ATOM, $value);
+
+        // Сравнение с обратным форматированием отсекает три класса мусора,
+        // которые createFromFormat пропускает: календарно несуществующие даты
+        // (2026-02-31 «переезжает» на 3 марта), смещение не UTC (+03:00)
+        // и суффикс Z вместо +00:00. Последние два особенно вредны: сортировка
+        // сравнивает эти строки лексикографически, и эквивалентные по времени
+        // метки встали бы в разном порядке — ровно тот плавающий порядок,
+        // против которого введён тай-брейк.
+        if ($parsed === false || $parsed->format(DateTimeInterface::ATOM) !== $value) {
+            throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
+        }
+
+        if ($parsed->getOffset() !== 0) {
             throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
         }
     }

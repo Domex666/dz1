@@ -7,7 +7,12 @@
 # «убрать http_response_code», «отдавать text/html», «путь всегда /» — проходили
 # через него незамеченными.
 #
-# Требуется ПОДНЯТЫЙ сервис (см. README.md) и curl.
+# ВНИМАНИЕ: скрипт РАЗРУШИТЕЛЕН для файла хранилища. Он переписывает $STORAGE
+# в пустой список, по ходу проверки удаляет и портит его, и восстанавливает в конце.
+# Непустое хранилище защищено: без FORCE=1 скрипт откажется работать.
+#
+# Требуется ПОДНЯТЫЙ сервис (см. README.md), curl и запуск из корня репозитория
+# (путь по умолчанию к хранилищу — относительный).
 #
 # Использование:
 #   sh scripts/smoke.sh
@@ -20,6 +25,7 @@ STORAGE="${STORAGE:-storage/notes.json}"
 
 PASSED=0
 FAILED=0
+LAST_OK=0
 BODY_FILE="$(mktemp)"
 
 # Хранилище всегда возвращается в пригодное состояние, даже если скрипт прервали.
@@ -45,6 +51,8 @@ check() {
 
     printf '%s\n' "$(cat "$BODY_FILE")"
 
+    LAST_OK=0
+
     if [ "$code" != "$expected" ]; then
         printf 'FAIL  %s: ожидался HTTP %s, получен %s\n' "$description" "$expected" "$code"
         FAILED=$((FAILED + 1))
@@ -61,12 +69,22 @@ check() {
             ;;
     esac
 
+    LAST_OK=1
     printf 'ok    %s (HTTP %s)\n' "$description" "$code"
     PASSED=$((PASSED + 1))
 }
 
-# contains <описание> <подстрока> — проверяет тело последнего ответа
+# contains <описание> <подстрока> — проверяет тело последнего ответа.
+# Если предыдущая сверка провалилась, эта не засчитывается: иначе при лежащем
+# сервисе скрипт рапортовал «пройдено: 3» за проверки, которые сравнивали файл,
+# записанный им же самим, и от ответа сервиса не зависели.
 contains() {
+    if [ "$LAST_OK" != "1" ]; then
+        printf 'SKIP  %s: предыдущая сверка провалилась\n' "$1"
+        FAILED=$((FAILED + 1))
+        return
+    fi
+
     if grep -q -- "$2" "$BODY_FILE"; then
         printf 'ok    %s\n' "$1"
         PASSED=$((PASSED + 1))
@@ -77,6 +95,22 @@ contains() {
 }
 
 section "Сброс хранилища в пустое состояние"
+
+# Скрипт разрушителен: он переписывает $STORAGE в начале, удаляет и портит его
+# по ходу проверки состояний хранилища и восстанавливает в конце.
+# Значение по умолчанию — рабочий файл проекта, поэтому непустое хранилище
+# защищено: без FORCE=1 скрипт откажется работать, а не потеряет чужие данные.
+if [ -f "$STORAGE" ]; then
+    current=$(tr -d ' \t\n\r' < "$STORAGE")
+
+    if [ -n "$current" ] && [ "$current" != "[]" ] && [ "${FORCE:-0}" != "1" ]; then
+        printf 'ОТКАЗ: %s содержит данные, а прогон их уничтожит.\n' "$STORAGE"
+        printf 'Запустите с другим файлом: STORAGE=/tmp/notes.json sh scripts/smoke.sh\n'
+        printf 'либо подтвердите потерю: FORCE=1 sh scripts/smoke.sh\n'
+        exit 2
+    fi
+fi
+
 mkdir -p "$(dirname "$STORAGE")"
 printf '[]\n' > "$STORAGE"
 echo "$STORAGE := []"
@@ -118,7 +152,7 @@ section "9. Повторный PUT тем же телом — идемпотен
 check "повторная замена" 200 -X PUT "$API/notes/$ID" -H 'Content-Type: application/json' \
   -d '{"title":"Созвон перенесён","content":"Новый текст","tags":["Работа","Срочное"]}'
 UPDATED_SECOND=$(sed -n 's/.*"updatedAt":"\([^"]*\)".*/\1/p' "$BODY_FILE")
-if [ "$UPDATED_FIRST" = "$UPDATED_SECOND" ]; then
+if [ "$LAST_OK" = "1" ] && [ -n "$UPDATED_FIRST" ] && [ "$UPDATED_FIRST" = "$UPDATED_SECOND" ]; then
     printf 'ok    updatedAt не изменился (%s)\n' "$UPDATED_FIRST"
     PASSED=$((PASSED + 1))
 else
@@ -176,7 +210,7 @@ contains "код STORAGE_CORRUPTED" 'STORAGE_CORRUPTED'
 
 section "24. Испорченный файл не затирается записью"
 check "запись отклонена" 500 -X POST "$API/notes" -H 'Content-Type: application/json' -d '{"title":"Новая"}'
-if [ "$(cat "$STORAGE")" = "{ это не JSON" ]; then
+if [ "$LAST_OK" = "1" ] && [ "$(cat "$STORAGE")" = "{ это не JSON" ]; then
     printf 'ok    содержимое файла не изменилось\n'
     PASSED=$((PASSED + 1))
 else
@@ -187,7 +221,7 @@ fi
 section "25. Порча на уровне записи тоже блокирует запись"
 printf '%s' '[{"id":"11111111-1111-4111-8111-111111111111","title":"НЕ ТРОГАТЬ","tags":[],"created_at":"2026-01-01T00:00:00+00:00","updated_at":"2026-01-01T00:00:00+00:00"}]' > "$STORAGE"
 check "DELETE по испорченной записи" 500 -X DELETE "$API/notes/11111111-1111-4111-8111-111111111111"
-if grep -q 'НЕ ТРОГАТЬ' "$STORAGE"; then
+if [ "$LAST_OK" = "1" ] && grep -q 'НЕ ТРОГАТЬ' "$STORAGE"; then
     printf 'ok    запись на месте\n'
     PASSED=$((PASSED + 1))
 else

@@ -25,6 +25,20 @@ final class NoteFilterTest extends FeatureTestCase
         ]);
     }
 
+    public function testFilterMatchesNoteWithDuplicateTagsInStorage(): void
+    {
+        // array_intersect несимметричен: перестановка аргументов ломает
+        // сопоставление, когда в записи есть повторяющийся тег.
+        $this->seedStorage([
+            $this->noteRow('44444444-4444-4444-8444-444444444444', 'С дублями', ['РАБОТА', 'РАБОТА']),
+        ]);
+
+        $response = $this->request('GET', '/api/v1/notes', query: ['tags' => 'работа']);
+
+        self::assertSame(200, $response->status);
+        self::assertCount(1, $this->data($response)['items']);
+    }
+
     public function testFilteredListIsReindexed(): void
     {
         // items обязан быть JSON-массивом, а не объектом с дырами в ключах:

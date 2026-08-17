@@ -416,6 +416,53 @@ final class NoteCrudTest extends FeatureTestCase
         }
     }
 
+    public function testNestedPathIsNotMatchedAsNoteId(): void
+    {
+        // Параметр маршрута обязан быть без слэшей: иначе /notes/a/b
+        // притворяется идентификатором и даёт NOTE_NOT_FOUND вместо ROUTE_NOT_FOUND.
+        $response = $this->request('GET', '/api/v1/notes/a/b');
+
+        self::assertSame(404, $response->status);
+        self::assertSame('ROUTE_NOT_FOUND', $this->error($response)['code']);
+    }
+
+    public function testZeroWidthNoBreakSpaceTagIsRejected(): void
+    {
+        $response = $this->send('POST', '/api/v1/notes', '{"title":"Заметка","tags":["\uFEFF"]}');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('tags.0', $this->fields($response));
+    }
+
+    public function testWhitespaceOnlyBodyIsValidationErrorNotBadRequest(): void
+    {
+        // Тело из одних пробелов — это отсутствие тела, а не битый JSON.
+        $response = $this->send('POST', '/api/v1/notes', '   ');
+
+        self::assertSame(422, $response->status);
+        self::assertArrayHasKey('title', $this->fields($response));
+    }
+
+    public function testTitleLengthIsMeasuredAfterTrim(): void
+    {
+        $response = $this->request('POST', '/api/v1/notes', [
+            'title' => str_repeat(' ', 20) . str_repeat('я', 190) . str_repeat(' ', 20),
+        ]);
+
+        self::assertSame(201, $response->status);
+        self::assertSame(190, mb_strlen($this->data($response)['title']));
+    }
+
+    public function testErrorFieldsStayObjectWhenAllKeysAreSequentialNumbers(): void
+    {
+        // Ключи 0 и 1 подряд — единственный случай, когда без приведения
+        // к объекту json_encode отдал бы массив и потерял имена полей.
+        $response = $this->send('POST', '/api/v1/notes', '{"0":"a","1":"b","title":"Заметка"}');
+
+        self::assertSame(422, $response->status);
+        self::assertStringContainsString('"fields":{', $response->encodedBody());
+    }
+
     private function rewriteStoredField(string $id, string $field, string $value): void
     {
         /** @var list<array<string, mixed>> $rows */

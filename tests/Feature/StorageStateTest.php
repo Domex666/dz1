@@ -204,6 +204,115 @@ final class StorageStateTest extends FeatureTestCase
         self::assertSame('STORAGE_CORRUPTED', $this->error($response)['code']);
     }
 
+    /**
+     * Удаление записи не из конца списка. Все прежние проверки удаляли
+     * единственную заметку, поэтому переиндексация не проверялась никогда,
+     * а без array_values хранилище превратилось бы в объект и убило API навсегда.
+     */
+    public function testDeletingMiddleNoteKeepsStorageAList(): void
+    {
+        $this->seedStorage([
+            $this->noteRow('11111111-1111-4111-8111-111111111111', 'Первая', [], '2026-01-01T00:00:00+00:00'),
+            $this->noteRow('22222222-2222-4222-8222-222222222222', 'Средняя', [], '2026-01-02T00:00:00+00:00'),
+            $this->noteRow('33333333-3333-4333-8333-333333333333', 'Третья', [], '2026-01-03T00:00:00+00:00'),
+        ]);
+
+        self::assertSame(204, $this->request('DELETE', '/api/v1/notes/22222222-2222-4222-8222-222222222222')->status);
+
+        $stored = json_decode((string)file_get_contents($this->storagePath), true);
+
+        self::assertTrue(array_is_list($stored), 'файл обязан остаться JSON-массивом, а не стать объектом');
+
+        $response = $this->request('GET', '/api/v1/notes');
+
+        self::assertSame(200, $response->status, 'после удаления из середины API обязан продолжать работать');
+        self::assertCount(2, $this->data($response)['items']);
+    }
+
+    public function testExtraKeyInRowIsCorrupted(): void
+    {
+        // Иначе сервис хранит и переписывает данные, которые никогда не валидировал,
+        // при том что лишнее поле в теле запроса отвергается кодом 422.
+        $row = $this->noteRow('11111111-1111-4111-8111-111111111111', 'Заметка');
+        $row['secret'] = 'leak-me';
+
+        $this->seedStorage([$row]);
+
+        $response = $this->request('GET', '/api/v1/notes');
+
+        self::assertSame(500, $response->status);
+        self::assertSame('STORAGE_CORRUPTED', $this->error($response)['code']);
+    }
+
+    /**
+     * @param string $timestamp
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('badTimestamps')]
+    public function testNonUtcOrImpossibleTimestampIsCorrupted(string $timestamp): void
+    {
+        $row = $this->noteRow('11111111-1111-4111-8111-111111111111', 'Заметка');
+        $row['created_at'] = $timestamp;
+        $row['updated_at'] = $timestamp;
+
+        $this->seedStorage([$row]);
+
+        $response = $this->request('GET', '/api/v1/notes');
+
+        self::assertSame(500, $response->status, "метка «{$timestamp}» должна считаться порчей");
+        self::assertSame('STORAGE_CORRUPTED', $this->error($response)['code']);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function badTimestamps(): array
+    {
+        return [
+            'суффикс Z вместо +00:00' => ['2026-08-17T10:00:00Z'],
+            'смещение не UTC' => ['2026-08-17T10:00:00+03:00'],
+            'календарно несуществующая дата' => ['2026-02-31T10:00:00+00:00'],
+            'без смещения' => ['2026-08-17T10:00:00'],
+            'мусор в хвосте' => ['2026-08-17T10:00:00+00:00GARBAGE'],
+        ];
+    }
+
+    public function testTagsAsJsonObjectInStorageIsCorrupted(): void
+    {
+        // {"0":"a","1":"b"} раньше молча становился списком и давал 200,
+        // а {"1":"a"} — 500. Одна форма данных, два разных вердикта.
+        $this->writeStorage(
+            '[{"id":"11111111-1111-4111-8111-111111111111","title":"t","content":"",'
+            . '"tags":{"0":"A","1":"B"},'
+            . '"created_at":"2026-01-01T00:00:00+00:00","updated_at":"2026-01-01T00:00:00+00:00"}]'
+        );
+
+        self::assertSame(500, $this->request('GET', '/api/v1/notes')->status);
+    }
+
+    public function testTopLevelJsonObjectIsCorrupted(): void
+    {
+        $this->writeStorage('{"k":{"id":"x","title":"t","content":"","tags":[],'
+            . '"created_at":"2026-01-01T00:00:00+00:00","updated_at":"2026-01-01T00:00:00+00:00"}}');
+
+        self::assertSame(500, $this->request('GET', '/api/v1/notes')->status);
+    }
+
+    public function testSingleCorruptRowPoisonsReadOfValidNote(): void
+    {
+        // findNoteById обязан проверять весь файл, а не останавливаться
+        // на первой подходящей строке: иначе часть API работает поверх мусора.
+        $valid = $this->noteRow('11111111-1111-4111-8111-111111111111', 'Целая');
+        $broken = $this->noteRow('22222222-2222-4222-8222-222222222222', 'Битая');
+        unset($broken['content']);
+
+        $this->seedStorage([$valid, $broken]);
+
+        $response = $this->request('GET', '/api/v1/notes/11111111-1111-4111-8111-111111111111');
+
+        self::assertSame(500, $response->status);
+        self::assertSame('STORAGE_CORRUPTED', $this->error($response)['code']);
+    }
+
     public function testCorruptedFileErrorHasNoStackTrace(): void
     {
         file_put_contents($this->storagePath, 'мусор');

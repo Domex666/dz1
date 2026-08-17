@@ -6,6 +6,7 @@ namespace App\Support\Helpers\File;
 
 use App\Enums\ErrorCodeEnum;
 use App\Exceptions\System\StorageException;
+use stdClass;
 use Throwable;
 
 /**
@@ -37,23 +38,31 @@ final readonly class JsonStorageHelper
             return [];
         }
 
-        $decoded = json_decode($raw, true);
+        // Декодируется в объекты, а не сразу в массивы, по той же причине,
+        // что и тело запроса: json_decode(..., true) превращает {"0":"a","1":"b"}
+        // в список, неотличимый от ["a","b"]. Из-за этого tags объектом
+        // то проходили, то нет — в зависимости от того, с нуля ли пронумерованы ключи.
+        $decoded = json_decode($raw);
 
-        if (!is_array($decoded) || !array_is_list($decoded)) {
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
             throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
         }
+
+        $rows = [];
 
         // Проверяется не только «это список», но и каждый его элемент.
         // Файл [1,2,3] формально список, и раньше он проходил чтение,
         // а падал уже глубже — TypeError'ом с кодом STORAGE_FAILURE.
         // Хуже того, запись в такой файл проходила и дописывала мусор к мусору.
         foreach ($decoded as $row) {
-            if (!is_array($row) || array_is_list($row)) {
+            if (!$row instanceof stdClass) {
                 throw new StorageException(ErrorCodeEnum::STORAGE_CORRUPTED);
             }
+
+            $rows[] = get_object_vars($row);
         }
 
-        return $decoded;
+        return $rows;
     }
 
     /**
